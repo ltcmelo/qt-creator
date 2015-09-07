@@ -1,3 +1,13 @@
+This fork of Qt Creator is a playground for experimenting with the
+Uaiso project (https://github.com/ltcmelo/uaiso), a language-unifying
+source code modelling engine. It currently features a simple editor
+implementation that demonstrates Uaiso's essential API.
+
+In order to use it you need to export an environment variable named
+UAISO_PATH pointing to where Uaiso is located.
+
+Official's Qt Creator README follows below.
+
 Qt Creator
 ==========
 Qt Creator is a cross-platform IDE for development with the Qt framework.

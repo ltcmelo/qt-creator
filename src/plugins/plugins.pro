@@ -6,6 +6,7 @@ SUBDIRS   = \
     coreplugin \
     texteditor \
     cppeditor \
+    uaisoeditor \
     bineditor \
     diffeditor \
     imageviewer \
