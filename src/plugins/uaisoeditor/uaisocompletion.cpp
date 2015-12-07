@@ -41,7 +41,7 @@
 #include <Parsing/Lexeme.h>
 #include <Parsing/LexemeMap.h>
 #include <Parsing/Phrasing.h>
-#include <Parsing/Thesaurus.h>
+#include <Parsing/Syntax.h>
 #include <Parsing/TokenMap.h>
 #include <Parsing/Unit.h>
 #include <Semantic/Binder.h>
@@ -60,7 +60,7 @@ using namespace TextEditor;
     //--- Provider ---//
 
 UaisoAssistProvider::UaisoAssistProvider(uaiso::Factory *factory)
-    : m_thesaurus(factory->makeThesaurus())
+    : m_syntax(factory->makeSyntax())
 {}
 
 UaisoAssistProvider::~UaisoAssistProvider()
@@ -78,17 +78,17 @@ IAssistProcessor *UaisoAssistProvider::createProcessor() const
 
 int UaisoAssistProvider::activationCharSequenceLength() const
 {
-    return std::max(m_thesaurus->funcCallDelim().size(),
-                    std::max(m_thesaurus->memberAccessOperator().size(),
-                             m_thesaurus->packageSeparator().size()));
+    return std::max(m_syntax->funcCallDelim().size(),
+                    std::max(m_syntax->memberAccessOprtr().size(),
+                             m_syntax->packageSeparator().size()));
 }
 
 bool UaisoAssistProvider::isActivationCharSequence(const QString &sequence) const
 {
     const std::string& seq = sequence.toStdString();
-    return seq == m_thesaurus->funcCallDelim()
-            || seq == m_thesaurus->memberAccessOperator()
-            || seq == m_thesaurus->packageSeparator();
+    return seq == m_syntax->funcCallDelim()
+            || seq == m_syntax->memberAccessOprtr()
+            || seq == m_syntax->packageSeparator();
 }
 
     //--- Processor ---//
@@ -115,40 +115,41 @@ IAssistProposal* UaisoAssistProcessor::perform(const AssistInterface *assistInte
     Convenience::convertPosition(interface->textDocument(), offset, &line, &col);
     --line;
 
-    bool sameLine = true;
-    std::unique_ptr<uaiso::Phrasing> phrasing;
-    QTextBlock block = interface->textDocument()->findBlock(offset);
-    std::unique_ptr<uaiso::IncrementalLexer> lexer = interface->m_factory->makeIncrementalLexer();
-    while (block.isValid()) {
-        lexer->tokenize(block.text().toStdString() + "\n");
-        phrasing.reset(lexer->releasePhrasing());
-        if (!phrasing)
-            return nullptr;
-        if (!phrasing->isEmpty())
-            break;
-        --line;
-        sameLine = false;
-        block = block.previous();
-    }
-    if (!block.isValid())
-        return nullptr;
-
-    int actualLine;
-    int actualCol;
-    if (sameLine) {
-        actualLine = line;
-        actualCol = col;
-        for (auto i = 0u; i < phrasing->size(); ++i) {
-            auto lineCol = phrasing->lineCol(i);
-            int endCol = lineCol.col_ + phrasing->length(i);
-            if (endCol > col)
+    int actualLine = line;
+    int actualCol = col;
+    std::unique_ptr<uaiso::Syntax> syntax = interface->m_factory->makeSyntax();
+    if (!syntax->hasNewlineAsTerminator()) {
+        bool sameLine = true;
+        std::unique_ptr<uaiso::Phrasing> phrasing;
+        QTextBlock block = interface->textDocument()->findBlock(offset);
+        std::unique_ptr<uaiso::IncrementalLexer> lexer = interface->m_factory->makeIncrementalLexer();
+        while (block.isValid()) {
+            lexer->lex(block.text().toStdString() + "\n");
+            phrasing.reset(lexer->releasePhrasing());
+            if (!phrasing)
+                return nullptr;
+            if (!phrasing->isEmpty())
                 break;
-            actualCol = endCol;
+            --line;
+            sameLine = false;
+            block = block.previous();
         }
-    } else {
-        auto lineCol = phrasing->lineCol(phrasing->size() - 1);
-        actualLine = line;
-        actualCol = lineCol.col_ + phrasing->length(phrasing->size() - 1);
+        if (!block.isValid())
+            return nullptr;
+
+        if (sameLine) {
+            for (auto i = 0u; i < phrasing->size(); ++i) {
+                auto lineCol = phrasing->lineCol(i);
+                int endCol = lineCol.col_ + phrasing->length(i);
+                if (endCol > col)
+                    break;
+                actualCol = endCol;
+            }
+        } else {
+            auto lineCol = phrasing->lineCol(phrasing->size() - 1);
+            actualLine = line;
+            actualCol = lineCol.col_ + phrasing->length(phrasing->size() - 1);
+        }
     }
 
     uaiso::LexemeMap lexemes;
@@ -194,10 +195,10 @@ bool UaisoAssistProcessor::acceptIdle(const UaisoAssistInterface* interface) con
 {
     int pos = interface->position();
 
-    std::unique_ptr<uaiso::Thesaurus> thesaurus = interface->m_factory->makeThesaurus();
+    std::unique_ptr<uaiso::Syntax> thesaurus = interface->m_factory->makeSyntax();
     std::string s(interface->characterAt(pos - 1).toLatin1(), 1);
     if (thesaurus->funcCallDelim() == s
-            || thesaurus->memberAccessOperator() == s
+            || thesaurus->memberAccessOprtr() == s
             || thesaurus->packageSeparator() == s) {
         return true;
     }

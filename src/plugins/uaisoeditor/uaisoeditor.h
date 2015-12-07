@@ -205,6 +205,7 @@ const char EDITOR_DISPLAY_NAME[] = QT_TRANSLATE_NOOP("OpenWith::Editors",
 const char MIMETYPE_XML[] = ":/uaiso/UaisoEditor.mimetypes.xml";
 const char D_MIMETYPE[]    = "text/x-dsrc";
 const char GO_MIMETYPE[]   = "text/x-gosrc";
+const char PY_MIMETYPE[]   = "text/x-python";
 const char RUST_MIMETYPE[] = "text/x-rustsrc";
 
 } // namespace Constants

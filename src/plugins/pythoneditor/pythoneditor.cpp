@@ -49,7 +49,9 @@ PythonEditorFactory::PythonEditorFactory()
 {
     setId(Constants::C_PYTHONEDITOR_ID);
     setDisplayName(tr(Constants::C_EDITOR_DISPLAY_NAME));
-    addMimeType(QLatin1String(Constants::C_PY_MIMETYPE));
+
+    // Uaiso: Disable mimetype for this factory.
+    //addMimeType(QLatin1String(Constants::C_PY_MIMETYPE));
 
     setEditorActionHandlers(TextEditorActionHandler::Format
                        | TextEditorActionHandler::UnCommentSelection

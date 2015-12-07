@@ -128,6 +128,7 @@ UaisoEditorFactory::UaisoEditorFactory()
 
     addMimeType(QLatin1String(Constants::D_MIMETYPE));
     addMimeType(QLatin1String(Constants::GO_MIMETYPE));
+    addMimeType(QLatin1String(Constants::PY_MIMETYPE));
     addMimeType(QLatin1String(Constants::RUST_MIMETYPE));
 
     setEditorActionHandlers(TextEditorActionHandler::Format
@@ -174,6 +175,8 @@ void UaisoEditorDocument::configure(const QString &oldPath, const QString &path)
         m_factory = uaiso::FactoryCreator::create(uaiso::LangName::D);
     else if (suffix == QLatin1String("go"))
         m_factory = uaiso::FactoryCreator::create(uaiso::LangName::Go);
+    else if (suffix == QLatin1String("py"))
+        m_factory = uaiso::FactoryCreator::create(uaiso::LangName::Py);
 
     m_unit = m_factory->makeUnit();
 
@@ -422,7 +425,7 @@ void UaisoSyntaxHighlighter::highlightBlock(const QString &text)
     if (state == -1)
         state = uaiso::IncrementalLexer::State::InCode;
 
-    m_lexer->tokenize(text.toStdString(), uaiso::IncrementalLexer::State(state));
+    m_lexer->lex(text.toStdString(), uaiso::IncrementalLexer::State(state));
 
     std::unique_ptr<uaiso::Phrasing> phrasing(m_lexer->releasePhrasing());
     if (!phrasing)
