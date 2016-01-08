@@ -27,7 +27,7 @@
 #include <texteditor/codeassist/assistinterface.h>
 
 namespace uaiso {
-class Syntax;
+class Lang;
 }
 
 class UaisoAssistProvider : public TextEditor::CompletionAssistProvider
@@ -43,7 +43,7 @@ public:
     int activationCharSequenceLength() const Q_DECL_OVERRIDE;
     bool isActivationCharSequence(const QString &sequence) const Q_DECL_OVERRIDE;
 
-    std::unique_ptr<uaiso::Syntax> m_syntax;
+    std::unique_ptr<uaiso::Lang> m_lang;
 };
 
 class UaisoAssistInterface;

@@ -30,7 +30,9 @@
 #include <texteditor/fontsettings.h>
 #include <texteditor/texteditoractionhandler.h>
 #include <texteditor/texteditorconstants.h>
+#include <texteditor/texteditorsettings.h>
 #include <texteditor/semantichighlighter.h>
+#include <utils/qtcassert.h>
 
 #include <QCoreApplication>
 #include <QFileInfo>
@@ -39,6 +41,7 @@
 #include <QProcessEnvironment>
 #include <QStringList>
 #include <QTextBlock>
+#include <QtConcurrentRun>
 
     /* Uaiso - https://github.com/ltcmelo/uaiso
      *
@@ -53,7 +56,7 @@
 #include <Parsing/Diagnostic.h>
 #include <Parsing/Factory.h>
 #include <Parsing/IncrementalLexer.h>
-#include <Parsing/Language.h>
+#include <Parsing/LangName.h>
 #include <Parsing/Lexeme.h>
 #include <Parsing/Phrasing.h>
 #include <Parsing/SourceLoc.h>
@@ -76,7 +79,8 @@ using namespace TextEditor;
 
 namespace {
 
-const int kInterval = 200;
+const int kSyntaxCheckInterval = 200;
+const int kSemanticCheckInterval = 100;
 
 } // anonymous
 
@@ -140,7 +144,9 @@ UaisoEditorFactory::UaisoEditorFactory()
     setEditorCreator([]() { return new UaisoEditor; });
     addHoverHandler(new UaisoHoverHandler);
     setMarksVisible(true);
-    //setParenthesesMatchingEnabled(true);
+    setParenthesesMatchingEnabled(true);
+    setCodeFoldingSupported(true);
+    setCommentStyle(Utils::CommentDefinition::HashStyle);
 }
 
     //----------------//
@@ -152,18 +158,30 @@ UaisoEditorDocument::UaisoEditorDocument()
 {
     setId(Constants::EDITOR_ID);
 
+    m_syntaxCheckTimer.setSingleShot(true);
+    m_syntaxCheckTimer.setInterval(kSyntaxCheckInterval);
+    connect(&m_syntaxCheckTimer, SIGNAL(timeout()), this, SLOT(parse()));
     connect(this, SIGNAL(contentsChanged()), this, SLOT(triggerAnalysis()));
 
-    m_parseTimer.setSingleShot(true);
-    m_parseTimer.setInterval(kInterval);
-    connect(&m_parseTimer, SIGNAL(timeout()), this, SLOT(processParse()));
+    m_semanticCheckTimer.setSingleShot(true);
+    m_semanticCheckTimer.setInterval(kSemanticCheckInterval);
+    connect(&m_semanticCheckTimer, SIGNAL(timeout()), this, SLOT(bindAndCheck()));
 
     connect(this, SIGNAL(filePathChanged(QString,QString)),
             this, SLOT(configure(QString,QString)));
+
+    connect(TextEditorSettings::instance(), SIGNAL(fontSettingsChanged(TextEditor::FontSettings)),
+            this, SLOT(updateFontSettings(TextEditor::FontSettings)));
 }
 
 UaisoEditorDocument::~UaisoEditorDocument()
-{}
+{
+    if (m_watcher) {
+        disconnectWatcher();
+        m_watcher->cancel();
+        m_watcher->waitForFinished();
+    }
+}
 
 void UaisoEditorDocument::configure(const QString &oldPath, const QString &path)
 {
@@ -183,17 +201,32 @@ void UaisoEditorDocument::configure(const QString &oldPath, const QString &path)
     delete completionAssistProvider();
     setCompletionAssistProvider(new UaisoAssistProvider(m_factory.get()));
     setSyntaxHighlighter(new UaisoSyntaxHighlighter(m_factory.get()));
-
     setFilePath(path);
+    updateFontSettings(fontSettings());
+}
+
+void UaisoEditorDocument::updateFontSettings(const TextEditor::FontSettings& fs)
+{
+    m_kindToFormat[static_cast<int>(uaiso::Symbol::Kind::Record)] =
+            fs.toTextCharFormat(TextEditor::C_TYPE);
+    m_kindToFormat[static_cast<int>(uaiso::Symbol::Kind::Var)] =
+            fs.toTextCharFormat(TextEditor::C_FIELD);
+    m_kindToFormat[static_cast<int>(uaiso::Symbol::Kind::EnumItem)] =
+            fs.toTextCharFormat(TextEditor::C_ENUMERATION);
+    m_kindToFormat[static_cast<int>(uaiso::Symbol::Kind::Func)] =
+            fs.toTextCharFormat(TextEditor::C_FUNCTION);
 }
 
 void UaisoEditorDocument::triggerAnalysis()
 {
-    m_parseTimer.start(kInterval);
+    m_syntaxCheckTimer.start(kSyntaxCheckInterval);
+    m_semanticCheckTimer.stop();
 }
 
-void UaisoEditorDocument::processParse()
+void UaisoEditorDocument::parse()
 {
+    m_syntaxCheckTimer.stop();
+
     PLUGIN->tokens()->clear(filePath().toStdString());
     PLUGIN->lexemes()->clear(filePath().toStdString());
 
@@ -201,16 +234,18 @@ void UaisoEditorDocument::processParse()
     m_unit->assignInput(code);
     m_unit->setFileName(filePath().toStdString());
     m_unit->parse(PLUGIN->tokens(), PLUGIN->lexemes());
-
     m_reports.reset(m_unit->releaseReports());
 
     emit requestDiagnosticsUpdate();
 
-    processSemantic();
+    if (m_unit->ast())
+        m_semanticCheckTimer.start(kSemanticCheckInterval);
 }
 
-void UaisoEditorDocument::processSemantic()
+void UaisoEditorDocument::bindAndCheck()
 {
+    m_semanticCheckTimer.stop();
+
     uaiso::ProgramAst* progAst = Program_Cast(m_unit->ast());
     if (!progAst)
         return;
@@ -222,15 +257,12 @@ void UaisoEditorDocument::processSemantic()
     binder.collectDiagnostics(m_reports.get());
     std::unique_ptr<uaiso::Program> prog(binder.bind(progAst, m_unit->fileName()));
 
-    emit requestDiagnosticsUpdate();
-
     if (!prog || prog->env().isEmpty())
         return;
 
     PLUGIN->snapshot().insertOrReplace(m_unit->fileName(), std::move(prog));
 
-    // Parsing, binding, dependencies processing, and snapshot tracking may,
-    // as an alternative, be combinedly processed by the Manager.
+    // Analyse dependencies.
     uaiso::Manager manager;
     manager.config(m_factory.get(),
                    PLUGIN->tokens(),
@@ -239,57 +271,7 @@ void UaisoEditorDocument::processSemantic()
     addSearchPaths(&manager);
     manager.processDeps(m_unit->fileName());
 
-    // Collect symbols for highlighting.
-    uaiso::SymbolCollector collector(m_factory.get());
-    auto refs = collector.collect(progAst, PLUGIN->lexemes());
-    if (refs.empty())
-        return;
-
-    QHash<int, QTextCharFormat> kindToFormat;
-    const TextEditor::FontSettings &fs = fontSettings();
-    kindToFormat[static_cast<int>(uaiso::Symbol::Kind::Record)] =
-            fs.toTextCharFormat(TextEditor::C_TYPE);
-    kindToFormat[static_cast<int>(uaiso::Symbol::Kind::Var)] =
-            fs.toTextCharFormat(TextEditor::C_FIELD);
-    kindToFormat[static_cast<int>(uaiso::Symbol::Kind::EnumItem)] =
-            fs.toTextCharFormat(TextEditor::C_ENUMERATION);
-    kindToFormat[static_cast<int>(uaiso::Symbol::Kind::Func)] =
-            fs.toTextCharFormat(TextEditor::C_FUNCTION);
-
-    QVector<HighlightingResult> results;
-    for (auto ref : refs) {
-        auto sym = std::get<1>(ref);
-        auto loc = std::get<2>(ref);
-        HighlightingResult result(loc.line_ + 1, loc.col_ + 1,
-                                  loc.lastCol_ - loc.col_,
-                                  static_cast<int>(sym->kind()));
-        results.append(result);
-    }
-
-    // Qt Creator expect the results are sorted.
-    std::sort(results.begin(), results.end(),
-              [](const HighlightingResult& a, const HighlightingResult& b) {
-                  return a.line != b.line ? a.line < b.line : a.column < b.column;
-              }
-    );
-
-    // This code is not really running as a future. Those classes
-    // are being used just to comply with the API.
-    QFutureInterface<HighlightingResult> interface;
-    QFuture<HighlightingResult> future = interface.future();
-    interface.reportResults(results);
-
-    SyntaxHighlighter *highlighter = syntaxHighlighter();
-    SemanticHighlighter::incrementalApplyExtraAdditionalFormats(
-                highlighter, future, 0, future.resultCount(), kindToFormat);
-    SemanticHighlighter::clearExtraAdditionalFormatsUntilEnd(
-                highlighter, future);
-
-    processTypeCheck();
-}
-
-void UaisoEditorDocument::processTypeCheck()
-{
+    // Type checking.
     uaiso::TypeChecker typeChecker(m_factory.get());
     typeChecker.setLexemes(PLUGIN->lexemes());
     typeChecker.setTokens(PLUGIN->tokens());
@@ -297,6 +279,121 @@ void UaisoEditorDocument::processTypeCheck()
     typeChecker.check(Program_Cast(m_unit->ast()));
 
     emit requestDiagnosticsUpdate();
+
+    processSemanticData();
+}
+
+
+namespace {
+
+class SymbolCollectorWrapper :
+        public QRunnable,
+        public QFutureInterface<TextEditor::HighlightingResult>
+{
+private:
+    uaiso::Factory* m_factory { nullptr };
+    uaiso::ProgramAst* m_progAst { nullptr } ;
+
+public:
+    SymbolCollectorWrapper(uaiso::Factory* factory,
+                           uaiso::ProgramAst* progAst)
+        : m_factory(factory), m_progAst(progAst)
+    {}
+
+    void run()
+    {
+        uaiso::SymbolCollector collector(m_factory);
+        auto refs = collector.collect(m_progAst, PLUGIN->lexemes());
+
+        if (!refs.empty()) {
+            QVector<HighlightingResult> results;
+            for (auto ref : refs) {
+                auto sym = std::get<1>(ref);
+                auto loc = std::get<2>(ref);
+                HighlightingResult result(loc.line_ + 1, loc.col_ + 1,
+                                          loc.lastCol_ - loc.col_,
+                                          static_cast<int>(sym->kind()));
+                results.append(result);
+            }
+
+            // Results are expected to be sorted.
+            std::sort(results.begin(), results.end(),
+                      [](const HighlightingResult& a, const HighlightingResult& b) {
+                return a.line != b.line ? a.line < b.line : a.column < b.column;
+            }
+            );
+            reportResults(results);
+        }
+
+        reportFinished();
+    }
+
+    typedef TextEditor::HighlightingResult Result;
+    typedef QFuture<Result> Future;
+
+    Future start()
+    {
+        this->setRunnable(this);
+        this->reportStarted();
+        Future future = this->future();
+        QThreadPool::globalInstance()->start(this, QThread::LowestPriority);
+        return future;
+    }
+};
+
+} // anonymous
+
+void UaisoEditorDocument::processSemanticData()
+{
+    if (m_watcher) {
+        disconnectWatcher();
+        m_watcher->cancel();
+    }
+
+    m_semanticRevision = document()->revision();
+    m_watcher.reset(new QFutureWatcher<TextEditor::HighlightingResult>);
+    connect(m_watcher.get(), SIGNAL(resultsReadyAt(int,int)),
+            this, SLOT(semanticDataAvailable(int,int)));
+    connect(m_watcher.get(), SIGNAL(finished()),
+            this, SLOT(semanticDataFinished()));
+
+    SymbolCollectorWrapper *collector =
+            new SymbolCollectorWrapper(m_factory.get(), Program_Cast(m_unit->ast()));
+    m_watcher->setFuture(collector->start());
+}
+
+void UaisoEditorDocument::disconnectWatcher()
+{
+    disconnect(m_watcher.get(), SIGNAL(resultsReadyAt(int,int)),
+               this, SLOT(semanticDataAvailable(int,int)));
+    disconnect(m_watcher.get(), SIGNAL(finished()),
+               this, SLOT(semanticDataFinished()));
+}
+
+void UaisoEditorDocument::semanticDataAvailable(int from, int to)
+{
+    if (document()->revision() != m_semanticRevision)
+        return;
+
+    if (!m_watcher || m_watcher->isCanceled())
+        return;
+
+    SyntaxHighlighter *highlighter = syntaxHighlighter();
+    QTC_CHECK(highlighter);
+    SemanticHighlighter::incrementalApplyExtraAdditionalFormats(
+                highlighter, m_watcher->future(), from, to, m_kindToFormat);
+}
+
+void UaisoEditorDocument::semanticDataFinished()
+{
+    if (!m_watcher->isCanceled()
+            && document()->revision() == m_semanticRevision) {
+        SyntaxHighlighter *highlighter = syntaxHighlighter();
+        QTC_CHECK(highlighter);
+        SemanticHighlighter::clearExtraAdditionalFormatsUntilEnd(
+               highlighter, m_watcher->future());
+    }
+    m_watcher.reset();
 }
 
     //--------------//
@@ -439,7 +536,7 @@ void UaisoSyntaxHighlighter::highlightBlock(const QString &text)
             setFormat(pos, leng, formatForCategory(kBuiltinFormat));
         } else if (uaiso::isKeyword(tk)) {
             setFormat(pos, leng, formatForCategory(kKeywordFormat));
-        } else if (uaiso::isOperator(tk)) {
+        } else if (uaiso::isOprtr(tk)) {
             setFormat(pos, leng, formatForCategory(kOperatorFormat));
         } else if (uaiso::isNumLit(tk)) {
             setFormat(pos, leng, formatForCategory(kNumericFormat));

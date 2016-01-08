@@ -37,11 +37,11 @@
 #include <Ast/Ast.h>
 #include <Parsing/Factory.h>
 #include <Parsing/IncrementalLexer.h>
-#include <Parsing/Language.h>
+#include <Parsing/Lang.h>
+#include <Parsing/LangName.h>
 #include <Parsing/Lexeme.h>
 #include <Parsing/LexemeMap.h>
 #include <Parsing/Phrasing.h>
-#include <Parsing/Syntax.h>
 #include <Parsing/TokenMap.h>
 #include <Parsing/Unit.h>
 #include <Semantic/Binder.h>
@@ -60,7 +60,7 @@ using namespace TextEditor;
     //--- Provider ---//
 
 UaisoAssistProvider::UaisoAssistProvider(uaiso::Factory *factory)
-    : m_syntax(factory->makeSyntax())
+    : m_lang(factory->makeLang())
 {}
 
 UaisoAssistProvider::~UaisoAssistProvider()
@@ -78,17 +78,17 @@ IAssistProcessor *UaisoAssistProvider::createProcessor() const
 
 int UaisoAssistProvider::activationCharSequenceLength() const
 {
-    return std::max(m_syntax->funcCallDelim().size(),
-                    std::max(m_syntax->memberAccessOprtr().size(),
-                             m_syntax->packageSeparator().size()));
+    return std::max(m_lang->funcCallDelim().size(),
+                    std::max(m_lang->memberAccessOprtr().size(),
+                             m_lang->packageSeparator().size()));
 }
 
 bool UaisoAssistProvider::isActivationCharSequence(const QString &sequence) const
 {
     const std::string& seq = sequence.toStdString();
-    return seq == m_syntax->funcCallDelim()
-            || seq == m_syntax->memberAccessOprtr()
-            || seq == m_syntax->packageSeparator();
+    return seq == m_lang->funcCallDelim()
+            || seq == m_lang->memberAccessOprtr()
+            || seq == m_lang->packageSeparator();
 }
 
     //--- Processor ---//
@@ -117,8 +117,8 @@ IAssistProposal* UaisoAssistProcessor::perform(const AssistInterface *assistInte
 
     int actualLine = line;
     int actualCol = col;
-    std::unique_ptr<uaiso::Syntax> syntax = interface->m_factory->makeSyntax();
-    if (!syntax->hasNewlineAsTerminator()) {
+    std::unique_ptr<uaiso::Lang> lang = interface->m_factory->makeLang();
+    if (!lang->hasNewlineAsTerminator()) {
         bool sameLine = true;
         std::unique_ptr<uaiso::Phrasing> phrasing;
         QTextBlock block = interface->textDocument()->findBlock(offset);
@@ -174,15 +174,21 @@ IAssistProposal* UaisoAssistProcessor::perform(const AssistInterface *assistInte
 
     uaiso::CompletionProposer proposer(interface->m_factory);
     auto result = proposer.propose(Program_Cast(unit->ast()), &lexemes);
-    auto syms = result.first;
+    auto syms = std::get<0>(result);
     if (syms.empty())
         return nullptr;
 
     QList<TextEditor::AssistProposalItem *> items;
-    std::for_each(syms.begin(), syms.end(), [&items] (const uaiso::DeclSymbol* decl) {
-        AssistProposalItem *item = new AssistProposalItem;
-        item->setText(QString::fromStdString(decl->name()->str()));
-        items.append(item);
+    std::for_each(syms.begin(), syms.end(), [&items] (const uaiso::Symbol* sym) {
+        if (uaiso::isDecl(sym)) {
+            AssistProposalItem *item = new AssistProposalItem;
+            item->setText(QString::fromStdString(ConstDeclSymbol_Cast(sym)->name()->str()));
+            items.append(item);
+        } else if (sym->kind() == uaiso::Symbol::Kind::Namespace) {
+            AssistProposalItem *item = new AssistProposalItem;
+            item->setText(QString::fromStdString(ConstNamespace_Cast(sym)->name()->str()));
+            items.append(item);
+        }
     });
 
     GenericProposalModel* model = new GenericProposalModel;
@@ -195,7 +201,7 @@ bool UaisoAssistProcessor::acceptIdle(const UaisoAssistInterface* interface) con
 {
     int pos = interface->position();
 
-    std::unique_ptr<uaiso::Syntax> thesaurus = interface->m_factory->makeSyntax();
+    std::unique_ptr<uaiso::Lang> thesaurus = interface->m_factory->makeLang();
     std::string s(interface->characterAt(pos - 1).toLatin1(), 1);
     if (thesaurus->funcCallDelim() == s
             || thesaurus->memberAccessOprtr() == s

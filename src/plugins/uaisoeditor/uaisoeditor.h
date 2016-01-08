@@ -22,13 +22,16 @@
 
 #include <coreplugin/editormanager/ieditorfactory.h>
 #include <extensionsystem/iplugin.h>
-#include <texteditor/texteditor.h>
-#include <texteditor/textdocument.h>
 #include <texteditor/basehoverhandler.h>
+#include <texteditor/semantichighlighter.h>
 #include <texteditor/syntaxhighlighter.h>
+#include <texteditor/textdocument.h>
+#include <texteditor/texteditor.h>
 
 #include <QtPlugin>
 #include <QAction>
+#include <QFutureWatcher>
+#include <QScopedPointer>
 #include <QTimer>
 
     /* Uaiso - https://github.com/ltcmelo/uaiso
@@ -111,21 +114,35 @@ public:
     explicit UaisoEditorDocument();
     ~UaisoEditorDocument();
 
-    QTimer m_parseTimer;
+    QTimer m_syntaxCheckTimer;
+    QTimer m_semanticCheckTimer;
     std::unique_ptr<uaiso::Factory> m_factory;
     std::unique_ptr<uaiso::Unit> m_unit;
     std::unique_ptr<uaiso::DiagnosticReports> m_reports;
-
-public slots:
-    void configure(const QString &oldPath, const QString &path);
-
-    void triggerAnalysis();
-    void processParse();
-    void processSemantic();
-    void processTypeCheck();
+    std::unique_ptr<QFutureWatcher<TextEditor::HighlightingResult>> m_watcher;
 
 signals:
     void requestDiagnosticsUpdate();
+
+private slots:
+    void configure(const QString &oldPath, const QString &path);
+    void updateFontSettings(const TextEditor::FontSettings& fs);
+
+    // Parsing, binding, type-checking.
+    void triggerAnalysis();
+    void parse();
+    void bindAndCheck();
+    void processSemanticData();
+
+    // Symbols info.
+    void semanticDataAvailable(int from, int to);
+    void semanticDataFinished();
+
+private:
+    void disconnectWatcher();
+
+    QHash<int, QTextCharFormat> m_kindToFormat;
+    int m_semanticRevision;
 };
 
     //--------------//
