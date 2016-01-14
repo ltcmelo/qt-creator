@@ -158,7 +158,7 @@ IAssistProposal* UaisoAssistProcessor::perform(const AssistInterface *assistInte
     uaiso::Manager manager;
     manager.config(interface->m_factory,
                    &tokens, &lexemes, snapshot);
-    addSearchPaths(&manager);
+    addSearchPaths(&manager, interface->m_factory->langName());
     std::unique_ptr<uaiso::Unit> unit = manager.process(
                 interface->textDocument()->toPlainText().toStdString(),
                 interface->fileName().toStdString(),

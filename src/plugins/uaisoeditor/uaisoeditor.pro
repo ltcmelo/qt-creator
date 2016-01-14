@@ -8,11 +8,16 @@ include(../../qtcreatorplugin.pri)
 
 HEADERS += \
     uaisoeditor.h \
-    uaisocompletion.h
+    uaisocompletion.h \
+    uaisosettings.h
 
 SOURCES += \
     uaisoeditor.cpp \
-    uaisocompletion.cpp
+    uaisocompletion.cpp \
+    uaisosettings.cpp
 
 RESOURCES += \
     uaisoeditor.qrc
+
+FORMS += \
+    uaisosettings.ui

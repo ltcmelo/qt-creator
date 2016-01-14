@@ -42,6 +42,7 @@
      * not even complete. The primary concern is to demonstrate Uaiso's API.
      */
 
+#include <Parsing/LangName.h>
 #include <Parsing/LexemeMap.h>
 #include <Parsing/TokenMap.h>
 #include <Semantic/Snapshot.h>
@@ -58,11 +59,13 @@ class Unit;
 
 namespace UaisoQtc {
 
+class UaisoSettingsPage;
+
     //--------------//
     //--- Plugin ---//
     //--------------//
 
-void addSearchPaths(uaiso::Manager* manager);
+void addSearchPaths(uaiso::Manager* manager, uaiso::LangName);
 
 class UaisoEditorPlugin : public ExtensionSystem::IPlugin
 {
@@ -82,12 +85,16 @@ public:
     uaiso::TokenMap *tokens() { return &m_tokens; }
     uaiso::Snapshot snapshot() { return m_snapshot; }
 
+    UaisoSettingsPage* settingsPage();
+
 private:
     static UaisoEditorPlugin *m_instance;
 
     uaiso::LexemeMap m_lexemes;
     uaiso::TokenMap m_tokens;
     uaiso::Snapshot m_snapshot;
+
+    UaisoSettingsPage* m_settingsPage;
 };
 
     //---------------//
@@ -224,6 +231,11 @@ const char D_MIMETYPE[]    = "text/x-dsrc";
 const char GO_MIMETYPE[]   = "text/x-gosrc";
 const char PY_MIMETYPE[]   = "text/x-python";
 const char RUST_MIMETYPE[] = "text/x-rustsrc";
+
+const char SETTINGS_ID[] = "AA.Uaiso Configurations";
+const char SETTINGS_CATEGORY[] = "AA.Uaiso";
+const char SETTINGS_TR_CATEGORY[] = QT_TRANSLATE_NOOP("Uaiso", "Uaiso");
+const char SETTINGS_CATEGORY_ICON[] = ":/uaiso/images/uaiso.png";
 
 } // namespace Constants
 

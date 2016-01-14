@@ -19,6 +19,7 @@
 
 #include "uaisoeditor.h"
 #include "uaisocompletion.h"
+#include "uaisosettings.h"
 
 #include <coreplugin/actionmanager/actioncontainer.h>
 #include <coreplugin/actionmanager/actionmanager.h>
@@ -56,7 +57,6 @@
 #include <Parsing/Diagnostic.h>
 #include <Parsing/Factory.h>
 #include <Parsing/IncrementalLexer.h>
-#include <Parsing/LangName.h>
 #include <Parsing/Lexeme.h>
 #include <Parsing/Phrasing.h>
 #include <Parsing/SourceLoc.h>
@@ -91,6 +91,7 @@ const int kSemanticCheckInterval = 100;
 UaisoEditorPlugin *UaisoEditorPlugin::m_instance = 0;
 
 UaisoEditorPlugin::UaisoEditorPlugin()
+    : m_settingsPage(new UaisoSettingsPage)
 {
     m_instance = this;
 }
@@ -114,12 +115,18 @@ bool UaisoEditorPlugin::initialize(const QStringList & /*arguments*/,
     }
 
     addAutoReleasedObject(new UaisoEditorFactory);
+    addAutoReleasedObject(m_settingsPage);
 
     return true;
 }
 
 void UaisoEditorPlugin::extensionsInitialized()
 {}
+
+UaisoSettingsPage *UaisoEditorPlugin::settingsPage()
+{
+    return m_settingsPage;
+}
 
     //---------------//
     //--- Factory ---//
@@ -130,10 +137,15 @@ UaisoEditorFactory::UaisoEditorFactory()
     setId(Constants::EDITOR_ID);
     setDisplayName(tr(Constants::EDITOR_DISPLAY_NAME));
 
-    addMimeType(QLatin1String(Constants::D_MIMETYPE));
-    addMimeType(QLatin1String(Constants::GO_MIMETYPE));
-    addMimeType(QLatin1String(Constants::PY_MIMETYPE));
-    addMimeType(QLatin1String(Constants::RUST_MIMETYPE));
+    UaisoSettings settings;
+    settings.load(Core::ICore::settings());
+    if (settings.m_options[static_cast<int>(uaiso::LangName::D)].m_enabled)
+        addMimeType(QLatin1String(Constants::D_MIMETYPE));
+    if (settings.m_options[static_cast<int>(uaiso::LangName::Go)].m_enabled)
+        addMimeType(QLatin1String(Constants::GO_MIMETYPE));
+    if (settings.m_options[static_cast<int>(uaiso::LangName::Py)].m_enabled)
+        addMimeType(QLatin1String(Constants::PY_MIMETYPE));
+    //addMimeType(QLatin1String(Constants::RUST_MIMETYPE));
 
     setEditorActionHandlers(TextEditorActionHandler::Format
                             | TextEditorActionHandler::UnCommentSelection
@@ -268,7 +280,7 @@ void UaisoEditorDocument::bindAndCheck()
                    PLUGIN->tokens(),
                    PLUGIN->lexemes(),
                    PLUGIN->snapshot());
-    addSearchPaths(&manager);
+    addSearchPaths(&manager, m_factory->langName());
     manager.processDeps(m_unit->fileName());
 
     // Type checking.
@@ -566,10 +578,11 @@ void UaisoHoverHandler::identifyMatch(TextEditorWidget *widget, int pos)
     }
 }
 
-void UaisoQtc::addSearchPaths(uaiso::Manager* manager)
+void UaisoQtc::addSearchPaths(uaiso::Manager* manager, uaiso::LangName lang)
 {
-    QString paths = QProcessEnvironment::systemEnvironment()
-            .value(QLatin1String("UAISO_SEARCH_PATHS"));
+    UaisoSettings settings;
+    settings.load(Core::ICore::settings());
+    QString paths = settings.m_options[static_cast<int>(lang)].m_systemPaths;
     if (!paths.isEmpty()) {
         const QStringList& pathList = paths.split(QLatin1Char(':'));
         foreach (const QString& path, pathList)
